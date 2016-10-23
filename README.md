@@ -18,3 +18,15 @@ Do this with Maven.
 
 
 ------
+------
+
+## :computer: Contributors
+
+|    | Nume | Rol | 
+----- | ---- | ------- | -------:
+:boy:  |  Gabriel  | PM | 
+:boy:  |  Adrian  | Code:star: | 
+
+----------
+
+**Made with :heart: by [GovITHub](http://ithub.gov.ro)**
