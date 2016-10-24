@@ -12,6 +12,7 @@ import java.util.concurrent.ExecutionException;
 import org.elasticsearch.action.get.GetResponse;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.update.UpdateRequest;
+import org.elasticsearch.action.update.UpdateResponse;
 import org.elasticsearch.client.transport.TransportClient;
 import org.elasticsearch.common.transport.InetSocketTransportAddress;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,7 +37,14 @@ public class ElasticSearchLoader {
 		// First we load everything from the feeds
 		infoPublicaFeedsLoader.load();
 		Map<String, RssFeed> feedsList = infoPublicaFeedsLoader.getFeedsList();
+		
+		
 		TransportClient client = TransportClient.builder().build();
+		
+//		if(!checkIndexExists("news", client)) {
+//			createIndex("news", client);
+//		}
+		
 		try {
 			client = getElasticClient();
 		} catch (UnknownHostException ex) {
@@ -44,15 +52,18 @@ public class ElasticSearchLoader {
 		}
 		int sum = 0;
 		int count = 0;
+		System.out.println("Number of feeds to insert news from: " + feedsList.size());
 		for (Entry<String, RssFeed> entry : feedsList.entrySet()) {
 			count = 0;
 			List<Item> items = entry.getValue().getChannel().getItems();
+			System.out.println("Inserting " + items.size() + " for this feed: " + entry.getKey());
 			for (Item item : items) {
 				try {
-					elasticSearchUpsert(item, entry.getKey(), client);
+					elasticSearchInsert(item, entry.getKey(), client);
 					count++;
 				} catch (Exception ex) {
 					System.out.println("Exception while inserting into Elastic Search");
+					System.out.println("Exception: " + ex.getMessage());
 				}
 			}
 			sum += count;
@@ -61,36 +72,34 @@ public class ElasticSearchLoader {
 		client.close();
 	}
 	
-	public void elasticSearchUpsert(final Item item, String category, TransportClient client) throws IOException, InterruptedException, ExecutionException {
-		GetResponse response = client.prepareGet("news", "new", "m-" + category + "-" + Integer.toString(item.getTitle().hashCode())).get();
-		if(response.isExists() == false) {
-			IndexRequest indexRequest = new IndexRequest("news", "new", "m-" + category + "-" + Integer.toString(item.getTitle().hashCode()))
-			        .source(jsonBuilder()
-			            .startObject()
-			                .field("title", item.getTitle())
-			                .field("description", item.getDescription())
-			                .field("date", getPubDate(item.getPubDate()))
-			                .field("link", item.getLink())
-			            .endObject());
-			client.index(indexRequest);
-		}
-//		IndexRequest indexRequest = new IndexRequest("news", "new", "m-" + category + "-" + Integer.toString(item.getTitle().hashCode()))
-//						.source(jsonBuilder().startObject()
-//							.field("title", item.getTitle())
-//							.field("description", item.getDescription())
-//							.field("date", getPubDate(item.getPubDate()))
-//							.field("link", item.getLink())
-//						.endObject());
-//		UpdateRequest updateRequest = new UpdateRequest("news", "new", "m-" + category + "-" + Integer.toString(item.getTitle().hashCode()))
-//		        .doc(jsonBuilder()
-//		            .startObject()
-//		            	.field("title", item.getTitle())
-//		            	.field("description", item.getDescription())
-//		            	.field("date", getPubDate(item.getPubDate()))
-//		            	.field("link", item.getLink())
-//		            .endObject())
-//		        .upsert(indexRequest);              
-//		client.update(updateRequest).get();
+//	private void createIndex(String index, TransportClient client) {
+//		client.admin().indices().create(Requests.createIndexRequest(index)).actionGet();
+//	}
+//
+//	private boolean checkIndexExists(String index, TransportClient client) {
+//		return client.admin().indices().prepareExists(index).execute().actionGet().isExists();
+//	}
+
+	public void elasticSearchInsert(final Item item, String category, TransportClient client) throws IOException, InterruptedException, ExecutionException {
+
+		IndexRequest indexRequest = new IndexRequest("news", "new", "m-" + category + "-" + Integer.toString((item.getTitle() + item.getDescription()).hashCode()))
+						.source(jsonBuilder().startObject()
+							.field("title", item.getTitle())
+							.field("description", item.getDescription())
+							.field("date", getPubDate(item.getPubDate()))
+							.field("link", item.getLink())
+						.endObject());
+		UpdateRequest updateRequest = new UpdateRequest("news", "new", "m-" + category + "-" + Integer.toString((item.getTitle() + item.getDescription()).hashCode()))
+		        .doc(jsonBuilder()
+		            .startObject()
+		            	.field("title", item.getTitle())
+		            	.field("description", item.getDescription())
+		            	.field("date", getPubDate(item.getPubDate()))
+		            	.field("link", item.getLink())
+		            .endObject())
+		        .upsert(indexRequest);              
+		UpdateResponse updateResponse = client.update(updateRequest).get();
+		System.out.println("m-" + category + "-" + Integer.toString(item.getTitle().hashCode()) + " created: " +  updateResponse.isCreated());
 	}
 	
 	private long getPubDate(Date date) {
