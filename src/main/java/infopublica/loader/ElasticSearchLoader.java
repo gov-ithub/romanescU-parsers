@@ -9,13 +9,16 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.concurrent.ExecutionException;
 
-import org.elasticsearch.action.get.GetResponse;
+import javax.annotation.Resource;
+
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.update.UpdateRequest;
-import org.elasticsearch.action.update.UpdateResponse;
 import org.elasticsearch.client.transport.TransportClient;
+import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.InetSocketTransportAddress;
+import org.elasticsearch.common.transport.TransportAddress;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 import infopublica.model.Item;
@@ -28,23 +31,34 @@ public class ElasticSearchLoader {
 
 	@Autowired
 	private InfopublicaFeedsLoader infoPublicaFeedsLoader;
+	
+	@Resource
+	private Environment environment;
 
 	public TransportClient getElasticClient() throws UnknownHostException {
-		return TransportClient.builder().build().addTransportAddress(new InetSocketTransportAddress(InetAddress.getByName("localhost"), 9300));
+		TransportClient client = TransportClient.builder().settings(settings()).build();
+		TransportAddress address = new InetSocketTransportAddress(
+				InetAddress.getByName(environment.getProperty("elasticsearch.host")),
+				Integer.parseInt(environment.getProperty("elasticsearch.port")));
+
+		client.addTransportAddress(address);
+		return client;
 	}
+	
+	private Settings settings() {
+		return Settings.builder()
+			.put("cluster.name", environment.getProperty("elasticsearch.cluster"))
+			.put("node.client", true)
+			.put("client.transport.sniff", true)
+			.put("client.transport.ignore_cluster_name", false)
+			.build();
+	}	
 
 	public void loadIntoElastic() {
 		// First we load everything from the feeds
 		infoPublicaFeedsLoader.load();
 		Map<String, RssFeed> feedsList = infoPublicaFeedsLoader.getFeedsList();
-		
-		
 		TransportClient client = TransportClient.builder().build();
-		
-//		if(!checkIndexExists("news", client)) {
-//			createIndex("news", client);
-//		}
-		
 		try {
 			client = getElasticClient();
 		} catch (UnknownHostException ex) {
@@ -52,18 +66,15 @@ public class ElasticSearchLoader {
 		}
 		int sum = 0;
 		int count = 0;
-		System.out.println("Number of feeds to insert news from: " + feedsList.size());
 		for (Entry<String, RssFeed> entry : feedsList.entrySet()) {
 			count = 0;
 			List<Item> items = entry.getValue().getChannel().getItems();
-			System.out.println("Inserting " + items.size() + " for this feed: " + entry.getKey());
 			for (Item item : items) {
 				try {
 					elasticSearchInsert(item, entry.getKey(), client);
 					count++;
 				} catch (Exception ex) {
 					System.out.println("Exception while inserting into Elastic Search");
-					System.out.println("Exception: " + ex.getMessage());
 				}
 			}
 			sum += count;
@@ -71,14 +82,6 @@ public class ElasticSearchLoader {
 		System.out.println("Number of news: " + sum);
 		client.close();
 	}
-	
-//	private void createIndex(String index, TransportClient client) {
-//		client.admin().indices().create(Requests.createIndexRequest(index)).actionGet();
-//	}
-//
-//	private boolean checkIndexExists(String index, TransportClient client) {
-//		return client.admin().indices().prepareExists(index).execute().actionGet().isExists();
-//	}
 
 	public void elasticSearchInsert(final Item item, String category, TransportClient client) throws IOException, InterruptedException, ExecutionException {
 
@@ -98,8 +101,7 @@ public class ElasticSearchLoader {
 		            	.field("link", item.getLink())
 		            .endObject())
 		        .upsert(indexRequest);              
-		UpdateResponse updateResponse = client.update(updateRequest).get();
-		System.out.println("m-" + category + "-" + Integer.toString(item.getTitle().hashCode()) + " created: " +  updateResponse.isCreated());
+		client.update(updateRequest).get();
 	}
 	
 	private long getPubDate(Date date) {
